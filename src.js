@@ -134,7 +134,13 @@ const draw = (id,traces,extra={}) => {
     extra={...extra,xaxis:{...extra.xaxis,range:[lo<0?lo-pad:0,hi>0?hi+pad:0]}};
     hb.forEach(t=>t.cliponaxis=false);
   }
-  Plotly.react(el,traces,layout(extra.height??340,extra),config);
+  // Plotly の初期描画にも変化を感じられるよう、更新ごとにグラフ本体を入場させる。
+  // transition はフィルター操作など、既存グラフの値が変わる場合にも効く。
+  Plotly.react(el,traces,layout(extra.height??340,extra),config).then(()=>{
+    el.classList.remove('chart-enter');
+    void el.offsetWidth; // 同じグラフを再描画したときもアニメーションを再開する
+    el.classList.add('chart-enter');
+  });
 };
 const ax = (title,extra={}) => ({title,gridcolor:'#e8eef5',zeroline:false,...extra});
 const catX = {type:'category'};
@@ -297,9 +303,17 @@ function drawPref(){
   const y=chosenYear, st=stats();
   const rank=prefectures.slice().sort((a,b)=>v(b,y)-v(a,y)).slice(0,15).reverse();
   draw('rankingChart',[{type:'bar',orientation:'h',x:rank.map(d=>v(d,y)),y:rank.map(d=>d.name),marker:{color:rank.map(d=>d.name==='福島'?ACCENT:MUTED)},text:rank.map(d=>v(d,y)),textposition:'outside',hovertemplate:'%{y}: %{x}人<extra></extra>'}],{height:460,margin:{l:60,r:40,t:10,b:36},xaxis:{title:'人',showgrid:false},yaxis:{automargin:true}});
-  const labels=[],parents=[],values=[],colors=[];
-  regionNames.forEach(r=>{const p=inRegion(r).filter(d=>v(d,y)>0);if(!p.length)return;labels.push(r);parents.push('');values.push(sumOf(p,y));colors.push(colRegion[r]);p.forEach(d=>{labels.push(d.name);parents.push(r);values.push(v(d,y));colors.push(colRegion[r]);});});
-  draw('treemapChart',[{type:'treemap',labels,parents,values,branchvalues:'total',marker:{colors,line:{color:'#fff',width:2}},texttemplate:'%{label}<br>%{value}人',hovertemplate:'%{label}: %{value}人<extra></extra>'}],{height:460,margin:{l:5,r:5,t:5,b:5}});
+  // labels ではなく一意な ids で親子関係を作る。地域ごとの色配列も marker に明示する。
+  // これにより同名ラベルへの依存をなくし、Plotly のバージョン差でも安定して表示できる。
+  const labels=['全国'],ids=['all'],parents=[''],values=[prefTotalOf(y)],colors=['#e2e8f0'];
+  regionNames.forEach(r=>{
+    const p=inRegion(r).filter(d=>v(d,y)>0);
+    if(!p.length)return;
+    const regionId=`region-${r}`;
+    labels.push(r);ids.push(regionId);parents.push('all');values.push(sumOf(p,y));colors.push(colRegion[r]);
+    p.forEach(d=>{labels.push(d.name);ids.push(`pref-${d.name}`);parents.push(regionId);values.push(v(d,y));colors.push(colRegion[r]);});
+  });
+  draw('treemapChart',[{type:'treemap',labels,ids,parents,values,branchvalues:'total',marker:{colors,line:{color:'#fff',width:2}},texttemplate:'%{label}<br>%{value}人',hovertemplate:'%{label}: %{value}人<extra></extra>',pathbar:{visible:false}}],{height:460,margin:{l:5,r:5,t:5,b:5}});
   const act=st.filter(s=>s.total>0);
   draw('bubbleChart',[{type:'scatter',mode:'markers+text',x:act.map(s=>s.total/years.length),y:act.map(s=>s.cv),text:act.map(s=>s.name),textposition:'top center',textfont:{size:9},marker:{size:act.map(s=>Math.max(6,Math.sqrt(s.total)*3.2)),color:act.map(s=>colRegion[s.region]),opacity:.75},customdata:act.map(s=>s.total),hovertemplate:'%{text}<br>年平均 %{x:.1f}人 / 変動 %{y:.2f}<br>累計 %{customdata}人<extra></extra>'}],{height:460,xaxis:{title:'年平均（人）',type:'log',gridcolor:'#e8eef5'},yaxis:ax('変動係数')});
   const mx=Math.max(1,...st.map(s=>Math.max(s.early,s.late)));
