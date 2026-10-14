@@ -123,6 +123,17 @@ const layout = (height,extra={}) => ({
   legend:{orientation:'h',y:1.14,x:0}, ...extra
 });
 const config = {displaylogo:false,responsive:true};
+// 棒・線はまずゼロの状態を描き、最終値へ遷移させる。
+// 円・ヒートマップなどは形が崩れやすいため、従来どおりのフェード表示にする。
+function chartStart(trace){
+  if(trace.type==='bar'){
+    if(Array.isArray(trace.y))return {...trace,y:trace.y.map(()=>0),text:undefined};
+    if(Array.isArray(trace.x))return {...trace,x:trace.x.map(()=>0),text:undefined};
+  }
+  if(trace.type==='scatter'&&Array.isArray(trace.y))return {...trace,y:trace.y.map(()=>0)};
+  return trace;
+}
+const canGrow = trace => (trace.type==='bar'&&(Array.isArray(trace.x)||Array.isArray(trace.y))) || (trace.type==='scatter'&&Array.isArray(trace.y));
 const draw = (id,traces,extra={}) => {
   const el=document.getElementById(id);
   if(!el)return;
@@ -134,9 +145,14 @@ const draw = (id,traces,extra={}) => {
     extra={...extra,xaxis:{...extra.xaxis,range:[lo<0?lo-pad:0,hi>0?hi+pad:0]}};
     hb.forEach(t=>t.cliponaxis=false);
   }
-  // Plotly の初期描画にも変化を感じられるよう、更新ごとにグラフ本体を入場させる。
-  // transition はフィルター操作など、既存グラフの値が変わる場合にも効く。
-  Plotly.react(el,traces,layout(extra.height??340,extra),config).then(()=>{
+  const growing=traces.map((trace,index)=>({trace,index})).filter(({trace})=>canGrow(trace));
+  const initial=growing.length?traces.map(chartStart):traces;
+  Plotly.react(el,initial,layout(extra.height??340,extra),config).then(()=>{
+    if(growing.length){
+      Plotly.animate(el,{data:growing.map(({trace})=>trace),traces:growing.map(({index})=>index)}, {
+        transition:{duration:620,easing:'cubic-in-out'}, frame:{duration:620,redraw:false},mode:'afterall'
+      });
+    }
     el.classList.remove('chart-enter');
     void el.offsetWidth; // 同じグラフを再描画したときもアニメーションを再開する
     el.classList.add('chart-enter');
