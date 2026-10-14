@@ -123,17 +123,52 @@ const layout = (height,extra={}) => ({
   legend:{orientation:'h',y:1.14,x:0}, ...extra
 });
 const config = {displaylogo:false,responsive:true};
-// 棒・線はまずゼロの状態を描き、最終値へ遷移させる。
-// 円・ヒートマップなどは形が崩れやすいため、従来どおりのフェード表示にする。
-function chartStart(trace){
-  if(trace.type==='bar'){
-    if(Array.isArray(trace.y))return {...trace,y:trace.y.map(()=>0),text:undefined};
-    if(Array.isArray(trace.x))return {...trace,x:trace.x.map(()=>0),text:undefined};
-  }
-  if(trace.type==='scatter'&&Array.isArray(trace.y))return {...trace,y:trace.y.map(()=>0)};
-  return trace;
+const chartObservers = new WeakMap();
+const dataAxis = trace => trace.type==='bar' ? (trace.orientation==='h'?'x':'y') : trace.type==='scatter' ? 'y' : null;
+const animated = trace => {const axis=dataAxis(trace);return axis&&Array.isArray(trace[axis]);};
+const easeOut = t => 1-(1-t)**3;
+
+function chartFrame(trace,progress){
+  const axis=dataAxis(trace), values=trace[axis];
+  if(trace.type==='bar')return {...trace,[axis]:values.map(value=>value*easeOut(progress)),text:undefined};
+  const count=Math.max(1,Math.ceil(values.length*progress));
+  const next={...trace,[axis]:values.slice(0,count)};
+  if(Array.isArray(trace.x))next.x=trace.x.slice(0,count);
+  if(Array.isArray(trace.text))next.text=trace.text.slice(0,count);
+  if(Array.isArray(trace.customdata))next.customdata=trace.customdata.slice(0,count);
+  return next;
 }
-const canGrow = trace => (trace.type==='bar'&&(Array.isArray(trace.x)||Array.isArray(trace.y))) || (trace.type==='scatter'&&Array.isArray(trace.y));
+
+function animateWhenVisible(el,traces,plotLayout){
+  chartObservers.get(el)?.disconnect();
+  el.classList.remove('chart-enter');
+  el.classList.add('chart-await');
+  const run=()=>{
+    el.classList.remove('chart-await');
+    const targets=traces.map((trace,index)=>({trace,index})).filter(({trace})=>animated(trace));
+    if(targets.length){
+      const initial=traces.map(trace=>animated(trace)?chartFrame(trace,0):trace);
+      const count=Math.min(12,Math.max(...targets.map(({trace})=>trace[dataAxis(trace)].length)));
+      const frames=Array.from({length:count},(_,i)=>{
+        const progress=(i+1)/count;
+        return {name:`chart-${i}`,traces:targets.map(({index})=>index),data:targets.map(({trace})=>chartFrame(trace,progress))};
+      });
+      Plotly.react(el,initial,plotLayout,config).then(()=>{
+        Plotly.addFrames(el,frames);
+        Plotly.animate(el,frames.map(frame=>frame.name),{mode:'afterall',transition:{duration:0},frame:{duration:65,redraw:false}});
+      });
+    }
+    void el.offsetWidth;
+    el.classList.add('chart-enter');
+  };
+  if(!('IntersectionObserver' in window)){run();return;}
+  const observer=new IntersectionObserver(entries=>{
+    if(!entries.some(entry=>entry.isIntersecting))return;
+    observer.disconnect();chartObservers.delete(el);run();
+  },{threshold:.2});
+  chartObservers.set(el,observer);
+  observer.observe(el);
+}
 const draw = (id,traces,extra={}) => {
   const el=document.getElementById(id);
   if(!el)return;
@@ -145,18 +180,8 @@ const draw = (id,traces,extra={}) => {
     extra={...extra,xaxis:{...extra.xaxis,range:[lo<0?lo-pad:0,hi>0?hi+pad:0]}};
     hb.forEach(t=>t.cliponaxis=false);
   }
-  const growing=traces.map((trace,index)=>({trace,index})).filter(({trace})=>canGrow(trace));
-  const initial=growing.length?traces.map(chartStart):traces;
-  Plotly.react(el,initial,layout(extra.height??340,extra),config).then(()=>{
-    if(growing.length){
-      Plotly.animate(el,{data:growing.map(({trace})=>trace),traces:growing.map(({index})=>index)}, {
-        transition:{duration:620,easing:'cubic-in-out'}, frame:{duration:620,redraw:false},mode:'afterall'
-      });
-    }
-    el.classList.remove('chart-enter');
-    void el.offsetWidth; // 同じグラフを再描画したときもアニメーションを再開する
-    el.classList.add('chart-enter');
-  });
+  const plotLayout=layout(extra.height??340,extra);
+  Plotly.react(el,traces,plotLayout,config).then(()=>animateWhenVisible(el,traces,plotLayout));
 };
 const ax = (title,extra={}) => ({title,gridcolor:'#e8eef5',zeroline:false,...extra});
 const catX = {type:'category'};
