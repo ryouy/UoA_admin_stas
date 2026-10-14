@@ -128,25 +128,23 @@ const chartObservers = new WeakMap();
 // Plotly のフレーム API は一部の trace 型で再描画が不安定になるため使わない。
 // 描画済みの SVG を直接アニメーションし、値・軸・ツールチップは常に完成状態に保つ。
 function animatePlotMarks(el){
-  el.querySelectorAll('.scatterlayer .js-line').forEach((path,index)=>{
-    try{
-      const length=path.getTotalLength();
-      if(!length)return;
-      const previous=path.getAttribute('style');
-      const animation=path.animate([
-        {strokeDasharray:length,strokeDashoffset:length,opacity:0},
-        {strokeDasharray:length,strokeDashoffset:0,opacity:1}
-      ],{duration:620,delay:index*80,easing:'ease-out',fill:'both'});
-      animation.finished.then(
-        ()=>previous===null?path.removeAttribute('style'):path.setAttribute('style',previous),
-        ()=>previous===null?path.removeAttribute('style'):path.setAttribute('style',previous)
-      );
-    }catch{/* SVG 非対応環境では完成状態のまま表示する */}
+  // Plotly は1本の折れ線を複数の SVG パスに分割することがある。
+  // パス単位で描くと途中に隙間ができるため、系列グループ全体を左から開く。
+  el.querySelectorAll('.scatterlayer .trace').forEach(trace=>{
+    const previous=trace.getAttribute('style');
+    const animation=trace.animate([
+      {clipPath:'inset(0 100% 0 0)'},
+      {clipPath:'inset(0 0 0 0)'}
+    ],{duration:360,easing:'ease-out',fill:'both'});
+    animation.finished.then(
+      ()=>previous===null?trace.removeAttribute('style'):trace.setAttribute('style',previous),
+      ()=>previous===null?trace.removeAttribute('style'):trace.setAttribute('style',previous)
+    );
   });
   el.querySelectorAll('.barlayer .points path').forEach((bar,index)=>{
     const previous=bar.getAttribute('style');
     const animation=bar.animate([{opacity:0,transform:'translateY(7px)'},{opacity:1,transform:'translateY(0)'}],{
-      duration:190,delay:Math.min(index*24,420),easing:'ease-out',fill:'both'
+      duration:150,delay:Math.min(index*14,240),easing:'ease-out',fill:'both'
     });
     animation.finished.then(
       ()=>previous===null?bar.removeAttribute('style'):bar.setAttribute('style',previous),
@@ -169,7 +167,7 @@ function animateWhenVisible(el){
   const observer=new IntersectionObserver(entries=>{
     if(!entries.some(entry=>entry.isIntersecting))return;
     observer.disconnect();chartObservers.delete(el);run();
-  },{threshold:.2});
+  },{threshold:.01,rootMargin:'0px 0px 180px 0px'});
   chartObservers.set(el,observer);
   observer.observe(el);
 }
