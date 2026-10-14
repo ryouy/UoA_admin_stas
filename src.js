@@ -124,42 +124,46 @@ const layout = (height,extra={}) => ({
 });
 const config = {displaylogo:false,responsive:true};
 const chartObservers = new WeakMap();
-const dataAxis = trace => trace.type==='bar' ? (trace.orientation==='h'?'x':'y') : trace.type==='scatter' ? 'y' : null;
-const animated = trace => {const axis=dataAxis(trace);return axis&&Array.isArray(trace[axis]);};
-const easeOut = t => 1-(1-t)**3;
 
-function chartFrame(trace,progress){
-  const axis=dataAxis(trace), values=trace[axis];
-  if(trace.type==='bar')return {...trace,[axis]:values.map(value=>value*easeOut(progress)),text:undefined};
-  const count=Math.max(1,Math.ceil(values.length*progress));
-  const next={...trace,[axis]:values.slice(0,count)};
-  if(Array.isArray(trace.x))next.x=trace.x.slice(0,count);
-  if(Array.isArray(trace.text))next.text=trace.text.slice(0,count);
-  if(Array.isArray(trace.customdata))next.customdata=trace.customdata.slice(0,count);
-  return next;
+// Plotly のフレーム API は一部の trace 型で再描画が不安定になるため使わない。
+// 描画済みの SVG を直接アニメーションし、値・軸・ツールチップは常に完成状態に保つ。
+function animatePlotMarks(el){
+  el.querySelectorAll('.scatterlayer .js-line').forEach((path,index)=>{
+    try{
+      const length=path.getTotalLength();
+      if(!length)return;
+      const previous=path.getAttribute('style');
+      const animation=path.animate([
+        {strokeDasharray:length,strokeDashoffset:length,opacity:0},
+        {strokeDasharray:length,strokeDashoffset:0,opacity:1}
+      ],{duration:620,delay:index*80,easing:'ease-out',fill:'both'});
+      animation.finished.then(
+        ()=>previous===null?path.removeAttribute('style'):path.setAttribute('style',previous),
+        ()=>previous===null?path.removeAttribute('style'):path.setAttribute('style',previous)
+      );
+    }catch{/* SVG 非対応環境では完成状態のまま表示する */}
+  });
+  el.querySelectorAll('.barlayer .points path').forEach((bar,index)=>{
+    const previous=bar.getAttribute('style');
+    const animation=bar.animate([{opacity:0,transform:'translateY(7px)'},{opacity:1,transform:'translateY(0)'}],{
+      duration:190,delay:Math.min(index*24,420),easing:'ease-out',fill:'both'
+    });
+    animation.finished.then(
+      ()=>previous===null?bar.removeAttribute('style'):bar.setAttribute('style',previous),
+      ()=>previous===null?bar.removeAttribute('style'):bar.setAttribute('style',previous)
+    );
+  });
 }
 
-function animateWhenVisible(el,traces,plotLayout){
+function animateWhenVisible(el){
   chartObservers.get(el)?.disconnect();
   el.classList.remove('chart-enter');
   el.classList.add('chart-await');
   const run=()=>{
     el.classList.remove('chart-await');
-    const targets=traces.map((trace,index)=>({trace,index})).filter(({trace})=>animated(trace));
-    if(targets.length){
-      const initial=traces.map(trace=>animated(trace)?chartFrame(trace,0):trace);
-      const count=Math.min(12,Math.max(...targets.map(({trace})=>trace[dataAxis(trace)].length)));
-      const frames=Array.from({length:count},(_,i)=>{
-        const progress=(i+1)/count;
-        return {name:`chart-${i}`,traces:targets.map(({index})=>index),data:targets.map(({trace})=>chartFrame(trace,progress))};
-      });
-      Plotly.react(el,initial,plotLayout,config).then(()=>{
-        Plotly.addFrames(el,frames);
-        Plotly.animate(el,frames.map(frame=>frame.name),{mode:'afterall',transition:{duration:0},frame:{duration:65,redraw:false}});
-      });
-    }
     void el.offsetWidth;
     el.classList.add('chart-enter');
+    animatePlotMarks(el);
   };
   if(!('IntersectionObserver' in window)){run();return;}
   const observer=new IntersectionObserver(entries=>{
@@ -181,7 +185,7 @@ const draw = (id,traces,extra={}) => {
     hb.forEach(t=>t.cliponaxis=false);
   }
   const plotLayout=layout(extra.height??340,extra);
-  Plotly.react(el,traces,plotLayout,config).then(()=>animateWhenVisible(el,traces,plotLayout));
+  Plotly.react(el,traces,plotLayout,config).then(()=>animateWhenVisible(el));
 };
 const ax = (title,extra={}) => ({title,gridcolor:'#e8eef5',zeroline:false,...extra});
 const catX = {type:'category'};
